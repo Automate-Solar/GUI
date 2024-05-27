@@ -3,6 +3,8 @@ from tkinter import ttk, messagebox, filedialog
 import json
 import os
 from PIL import Image, ImageDraw
+import source_configuration as sc
+import pandas as pd
 
 # Placeholder function for the image generation
 def get_placeholder_image():
@@ -20,6 +22,7 @@ class BerthaGUI(tk.Tk):
         self.title("BERTHA self-driving laboratory")
         self.geometry("600x600")
 
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)  # Handle window close
         self.config_file = "config.json"
         self.load_config()
 
@@ -73,6 +76,10 @@ class BerthaGUI(tk.Tk):
         self.withdraw()
         SetupWindow(self)
 
+    def on_closing(self):
+        self.destroy()
+        self.quit()
+        
 class SetupWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
@@ -99,10 +106,10 @@ class SetupWindow(tk.Toplevel):
         for row, list_name in enumerate(self.list_names, 2):
             ttk.Label(self.frame, text=list_name).grid(row=row, column=0, sticky=tk.E)
             self.entries[list_name] = []
-            for col in range(1, 7):
+            for col, value in enumerate(getattr(sc, list_name), 1):
                 entry = ttk.Entry(self.frame)
                 entry.grid(row=row, column=col)
-                entry.insert(0, "0")  # Placeholder for initial values
+                entry.insert(0, str(value))  # Populate with initial values from `sc`
                 entry.configure(state='readonly')
                 self.entries[list_name].append(entry)
 
@@ -118,16 +125,24 @@ class SetupWindow(tk.Toplevel):
                 entry.configure(state='normal')
 
     def on_close(self):
-        if any(entry.get() != "0" for entry_list in self.entries.values() for entry in entry_list):
+        if any(entry.get() != str(getattr(sc, list_name)[col-1]) for list_name, entry_list in self.entries.items() for col, entry in enumerate(entry_list, 1)):
             if messagebox.askyesno("Confirm", "Save changes?"):
-                # Update source configuration
                 self.update_source_config()
         self.parent.deiconify()
         self.destroy()
 
     def update_source_config(self):
-        # Here you would update the source_configuration (sc) module with new values
-        pass
+        for list_name, entry_list in self.entries.items():
+            updated_values = [entry.get() for entry in entry_list]
+            setattr(sc, list_name, updated_values)
+
+        # Write updated configuration back to source_configuration.py
+        sc_dict = {name: getattr(sc, name) for name in self.list_names}
+        with open('source_configuration.py', 'w') as f:
+            f.write('import ast\n\n')
+            for name, values in sc_dict.items():
+                f.write(f"{name} = {values}\n")
+
 
 class RecipeWindow(tk.Toplevel):
     def __init__(self, parent):
@@ -136,6 +151,7 @@ class RecipeWindow(tk.Toplevel):
         self.title("Run Standard Recipe")
         self.geometry("800x800")
 
+        self.recipe_dir = r"C:\Users\jonsc690\Documents\BEA-supervisor\Recipes"
         self.create_widgets()
 
     def create_widgets(self):
@@ -148,38 +164,39 @@ class RecipeWindow(tk.Toplevel):
         # Process setup widgets
         self.recipe_label = ttk.Label(self.process_frame, text="Recipe")
         self.recipe_label.pack(pady=5)
-        
+
         self.recipe_combobox = ttk.Combobox(self.process_frame)
         self.recipe_combobox.pack(pady=5)
-        
+        self.load_recipes()
+
         self.presputter_label = ttk.Label(self.process_frame, text="Presputter Time (s)")
         self.presputter_label.pack(pady=5)
-        
+
         self.presputter_entry = ttk.Entry(self.process_frame)
         self.presputter_entry.pack(pady=5)
-        
+
         self.qcms_frame = ttk.LabelFrame(self.process_frame, text="QCMs")
         self.qcms_frame.pack(pady=5, fill=tk.X)
-        
+
         self.use_qcms_toggle = ttk.Checkbutton(self.qcms_frame, text="Use QCMs")
         self.use_qcms_toggle.pack(side=tk.LEFT, padx=5, pady=5)
-        
+
         self.min_qcm_toggle = ttk.Checkbutton(self.qcms_frame, text="Minimize QCM Exposure")
         self.min_qcm_toggle.pack(side=tk.LEFT, padx=5, pady=5)
-        
+
         self.iterations_label = ttk.Label(self.process_frame, text="Iterations")
         self.iterations_label.pack(pady=5)
-        
+
         self.iterations_entry = ttk.Entry(self.process_frame)
         self.iterations_entry.pack(pady=5)
-        
+
         self.make_samples_check = ttk.Checkbutton(self.process_frame, text="Make Samples")
         self.make_samples_check.pack(pady=5)
 
         # Recipe preview widgets
         self.recipe_preview_label = ttk.Label(self.recipe_preview_frame, text="Recipe Preview")
         self.recipe_preview_label.pack(pady=5)
-        
+
         self.recipe_preview_text = tk.Text(self.recipe_preview_frame)
         self.recipe_preview_text.pack(expand=True, fill=tk.BOTH, pady=5)
 
@@ -195,15 +212,34 @@ class RecipeWindow(tk.Toplevel):
         self.run_cancel_frame = ttk.Frame(self)
         self.run_cancel_frame.pack(side=tk.LEFT, fill=tk.X, padx=10, pady=10)
 
-        self.run_button = ttk.Button(self.run_cancel_frame, text="Run Recipe")
+        self.run_button = ttk.Button(self.run_cancel_frame, text="Run Recipe", command=self.run_recipe)
         self.run_button.pack(side=tk.LEFT, padx=5, pady=5)
 
         self.cancel_button = ttk.Button(self.run_cancel_frame, text="Cancel", command=self.on_close)
         self.cancel_button.pack(side=tk.LEFT, padx=5, pady=5)
 
+    def load_recipes(self):
+        recipe_files = [f for f in os.listdir(self.recipe_dir) if f.endswith('.txt')]
+        self.recipe_combobox['values'] = recipe_files
+        self.recipe_combobox.bind('<<ComboboxSelected>>', self.display_recipe)
+
+    def display_recipe(self, event):
+        selected_recipe = self.recipe_combobox.get()
+        recipe_path = os.path.join(self.recipe_dir, selected_recipe)
+        if os.path.isfile(recipe_path):
+            with open(recipe_path, 'r') as file:
+                recipe_content = file.read()
+            self.recipe_preview_text.delete('1.0', tk.END)
+            self.recipe_preview_text.insert(tk.END, recipe_content)
+
+    def run_recipe(self):
+        # Logic to run the recipe
+        pass
+
     def on_close(self):
         self.parent.deiconify()
         self.destroy()
+
 
 class WorkflowWindow(tk.Toplevel):
     def __init__(self, parent):
