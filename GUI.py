@@ -5,10 +5,11 @@ import os
 from PIL import Image, ImageDraw
 import source_configuration as sc
 import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 # Placeholder function for the image generation
 def get_placeholder_image():
-    from PIL import Image, ImageDraw
     image = Image.new('RGB', (600, 600), 'black')
     draw = ImageDraw.Draw(image)
     draw.text((150, 300), "Utopian Automated Laboratory", fill="white")
@@ -79,7 +80,7 @@ class BerthaGUI(tk.Tk):
     def on_closing(self):
         self.destroy()
         self.quit()
-        
+
 class SetupWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
@@ -142,7 +143,6 @@ class SetupWindow(tk.Toplevel):
             f.write('import ast\n\n')
             for name, values in sc_dict.items():
                 f.write(f"{name} = {values}\n")
-
 
 class RecipeWindow(tk.Toplevel):
     def __init__(self, parent):
@@ -245,18 +245,23 @@ class RecipeWindow(tk.Toplevel):
         self.parent.deiconify()
         self.destroy()
 
+
 class WorkflowWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
         self.title("Enter Self-Driving Workflow")
         self.geometry("800x1000")
+        self.protocol("WM_DELETE_WINDOW", self.on_close)  # Handle window close event
 
         self.workflow_dir = "workflow definition files"
         os.makedirs(self.workflow_dir, exist_ok=True)
 
         self.active_sources = [False] * 6  # Initialize active_sources as a class variable
         self.loaded_workflow_file = tk.StringVar(value="No file loaded")  # Variable to hold the name of the loaded workflow file
+        self.target_compositions_df = pd.DataFrame()  # Initialize the dataframe
+        self.current_workflow_file = None  # Store the current workflow file path
+        self.workflow_data = {}  # Store workflow data
         self.create_widgets()
 
     def create_widgets(self):
@@ -287,14 +292,23 @@ class WorkflowWindow(tk.Toplevel):
         self.tab_control = ttk.Notebook(self)
         self.tab_control.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
 
-        self.workflow_stages = ["Stage 1", "Stage 2", "Stage 3", "Stage 4", "Stage 5"]
+        self.workflow_stages = ["Define Target Compositions", "Find Boundaries", "Learn Sputter Process", "Calibrate Compositions", "Learn Feature Map", "Feature Identification"]
+
+        self.tabs = {}  # Store tabs to enable/disable them later
 
         for stage in self.workflow_stages:
             tab = ttk.Frame(self.tab_control)
             self.tab_control.add(tab, text=stage)
+            self.tabs[stage] = tab
 
-            if stage == "Stage 1":
+            if stage == "Define Target Compositions":
                 self.create_stage_1_widgets(tab)
+            elif stage == "Find Boundaries":
+                self.create_find_boundaries_tab(tab)
+
+        # Disable all tabs except the first one
+        for i in range(1, len(self.workflow_stages)):
+            self.tab_control.tab(i, state="disabled")
 
     def create_stage_1_widgets(self, tab):
         self.table_label = ttk.Label(tab, text="Targeted Material Compositions")
@@ -315,38 +329,96 @@ class WorkflowWindow(tk.Toplevel):
             widget.destroy()
 
         headers = [sc.materials[i] for i, active in enumerate(self.active_sources) if active]
+        headers.append("Bind Target")  # Add the "Bind Target" header
+
+        self.table_headers = headers
 
         for col, header in enumerate(headers):
             ttk.Label(self.table_frame, text=header).grid(row=0, column=col + 1)
-            self.table_headers.append(header)
 
         for row in range(1, 9):
             ttk.Label(self.table_frame, text=str(row)).grid(row=row, column=0)
             self.table_entries[row] = []
-            for col in range(len(headers)):
-                entry = ttk.Entry(self.table_frame)
+            for col in range(len(headers) - 1):  # Adjust for "Bind Target" column
+                entry = ttk.Entry(self.table_frame, validate="key", validatecommand=(self.register(self.validate_positive_integer), '%P'))
+                entry.insert(0, "0")  # Initialize each entry with 0
                 entry.grid(row=row, column=col + 1)
                 self.table_entries[row].append(entry)
+            bind_button = ttk.Button(self.table_frame, text="Bind Target", command=lambda row=row: self.bind_target(row))
+            bind_button.grid(row=row, column=len(headers))
+            self.table_entries[row].append(bind_button)  # Add button to entries for disabling later
 
-    def fix_target(self, row):
-        # Implement logic for fixing the target
-        pass
+    def validate_positive_integer(self, value_if_allowed):
+        if value_if_allowed.isdigit() or value_if_allowed == "":
+            return True
+        else:
+            return False
+
+    def bind_target(self, row):
+        values = [entry.get() for entry in self.table_entries[row] if isinstance(entry, ttk.Entry)]
+        non_zero_values = [int(value) for value in values if value.isdigit() and int(value) > 0]
+
+        if len(non_zero_values) < 2:
+            messagebox.showwarning("Warning", "Please enter at least two non-zero values in the row.")
+            return
+
+        if messagebox.askokcancel("Bind Target", "Bind new target composition to the workflow?"):
+            new_row = {header: value for header, value in zip(self.table_headers[:-1], values)}  # Exclude "Bind Target" column
+            new_row_df = pd.DataFrame([new_row])
+            self.target_compositions_df = pd.concat([self.target_compositions_df, new_row_df], ignore_index=True)
+            self.save_workflow()
+            for entry in self.table_entries[row]:
+                entry.config(state='disabled')  # Disable entries
+            self.table_entries[row][-1].config(state='disabled')  # Disable the Bind Target button
+
+            # Enable the next tab if at least one bound target composition exists
+            if not self.target_compositions_df.empty:
+                self.tab_control.tab(1, state="normal")
 
     def load_workflow(self):
         filename = filedialog.askopenfilename(initialdir=self.workflow_dir, filetypes=[("JSON files", "*.json")])
         if filename:
+            self.current_workflow_file = filename
             with open(filename, 'r') as file:
-                data = json.load(file)
-                self.populate_workflow(data)
+                self.workflow_data = json.load(file)
+                print(f"Workflow data loaded: {self.workflow_data}")
+                self.populate_workflow(self.workflow_data)
                 self.loaded_workflow_file.set(f"Loaded: {os.path.basename(filename)}")
+                # Enable the second tab if there is at least one bound target composition
+                if "target_compositions" in self.workflow_data and self.workflow_data["target_compositions"]:
+                    self.target_compositions_df = pd.DataFrame(self.workflow_data["target_compositions"])
+                    self.tab_control.tab(1, state="normal")
+                    # Restore bound target compositions in the table and disable their fields
+                    for row_index, composition in enumerate(self.workflow_data["target_compositions"], start=1):
+                        for col_index, (header, value) in enumerate(composition.items()):
+                            if header in self.table_headers[:-1]:  # Exclude "Bind Target" column
+                                entry = self.table_entries[row_index][self.table_headers.index(header)]
+                                entry.delete(0, tk.END)
+                                entry.insert(0, value)
+                                entry.config(state='disabled')
+                        self.table_entries[row_index][-1].config(state='disabled')  # Disable the Bind Target button
+                # Update the dropdown in Find Boundaries tab
+                if hasattr(self, 'find_boundaries_tab'):
+                    print("Updating dropdown in Find Boundaries tab.")
+                    self.find_boundaries_tab.update_workflow_data(self.workflow_data)
 
     def save_workflow(self):
-        filename = filedialog.asksaveasfilename(initialdir=self.workflow_dir, defaultextension=".json", filetypes=[("JSON files", "*.json")])
-        if filename:
-            data = self.extract_workflow_data()
-            with open(filename, 'w') as file:
+        if self.current_workflow_file:
+            with open(self.current_workflow_file, 'r') as file:
+                data = json.load(file)
+            data["target_compositions"] = self.target_compositions_df.to_dict(orient='records')
+            with open(self.current_workflow_file, 'w') as file:
                 json.dump(data, file)
-            self.loaded_workflow_file.set(f"Saved: {os.path.basename(filename)}")
+            self.loaded_workflow_file.set(f"Saved: {os.path.basename(self.current_workflow_file)}")
+        else:
+            filename = filedialog.asksaveasfilename(initialdir=self.workflow_dir, defaultextension=".json", filetypes=[("JSON files", "*.json")])
+            if filename:
+                data = self.extract_workflow_data()
+                data["target_compositions"] = self.target_compositions_df.to_dict(orient='records')
+                with open(filename, 'w') as file:
+                    json.dump(data, file)
+                self.loaded_workflow_file.set(f"Saved: {os.path.basename(filename)}")
+                self.current_workflow_file = filename
 
     def new_workflow(self):
         # Clear current entries to start a new workflow
@@ -364,6 +436,7 @@ class WorkflowWindow(tk.Toplevel):
 
         # Create toggle controls and non-editable fields in the popup
         for i in range(6):
+            self.active_sources[i] = False  # Ensure all sources are set to False initially
             toggle_button = ttk.Checkbutton(popup, text=f"Source {i + 1}", command=lambda i=i: toggle_source(i))
             toggle_button.grid(row=0, column=i, padx=10, pady=10)
             value_label = ttk.Label(popup, text=sc.materials[i])
@@ -383,6 +456,7 @@ class WorkflowWindow(tk.Toplevel):
                         json.dump(workflow_data, file)
                     self.loaded_workflow_file.set(f"Created: {os.path.basename(filename)}")
                     self.update_table_headers()
+                    self.current_workflow_file = filename
                     popup.destroy()
 
         def cancel():
@@ -398,21 +472,258 @@ class WorkflowWindow(tk.Toplevel):
     def extract_workflow_data(self):
         data = {}
         for row, entry_list in self.table_entries.items():
-            data[row] = [entry.get() for entry in entry_list]
+            data[row] = [entry.get() for entry in entry_list if isinstance(entry, ttk.Entry)]
         return data
 
     def populate_workflow(self, data):
+        print(f"Populating workflow with data: {data}")
         self.active_sources = data.get("active_sources", [False] * 6)
         self.update_table_headers()
-        for row, values in data.items():
-            if row != "active_sources":
-                for col, value in enumerate(values):
-                    self.table_entries[int(row)][col].insert(0, value)
+
+        if "target_compositions" in data:
+            for row_index, composition in enumerate(data["target_compositions"], start=1):
+                for col_index, (header, value) in enumerate(composition.items()):
+                    if header in self.table_headers[:-1]:  # Exclude "Bind Target" column
+                        entry = self.table_entries[row_index][self.table_headers.index(header)]
+                        entry.delete(0, tk.END)
+                        entry.insert(0, value)
+                        entry.config(state='disabled')
+                # Disable the Bind Target button for this row
+                self.table_entries[row_index][-1].config(state='disabled')
+
+            # Enable the next tab if there is at least one bound target composition
+            self.tab_control.tab(1, state="normal")
+
+    def create_find_boundaries_tab(self, tab):
+        # Create the "Find Boundaries" tab widgets here
+        self.find_boundaries_tab = FindBoundariesTab(tab, self.workflow_data)
 
     def on_close(self):
         self.parent.deiconify()
         self.destroy()
 
+class FindBoundariesTab:
+    def __init__(self, parent, workflow_data):
+        self.parent = parent
+        self.workflow_data = workflow_data
+        self.target_materials = []
+        self.source_numbers = []
+        self.learning_data_dfs = {}  # Initialize a dictionary to store DataFrames for each source_number
+        self.create_widgets()
+        self.populate_dropdown()
+
+    def create_widgets(self):
+        # Main frame for the tab
+        self.frame = ttk.Frame(self.parent)
+        self.frame.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+
+        # Dropdown selection field
+        self.selection_label = ttk.Label(self.frame, text="Select Target Material:")
+        self.selection_label.pack(pady=5)
+
+        self.selection_var = tk.StringVar()
+        self.selection_dropdown = ttk.Combobox(self.frame, textvariable=self.selection_var)
+        self.selection_dropdown.pack(pady=5)
+        self.selection_dropdown.bind("<<ComboboxSelected>>", self.on_dropdown_selection)
+
+        # EE_LearnMinimumRate frame
+        self.ee_frame = ttk.LabelFrame(self.frame, text="EE_LearnMinimumRate")
+        self.ee_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+
+        # Buttons in the EE_LearnMinimumRate frame
+        self.add_training_data_button = ttk.Button(self.ee_frame, text="Add training data", command=self.add_training_data)
+        self.add_training_data_button.pack(fill=tk.X, pady=5)
+
+        self.clear_training_data_button = ttk.Button(self.ee_frame, text="Clear training data", command=self.clear_training_data)
+        self.clear_training_data_button.pack(fill=tk.X, pady=5)
+
+        self.train_new_model_button = ttk.Button(self.ee_frame, text="Train new model", command=self.train_new_model)
+        self.train_new_model_button.pack(fill=tk.X, pady=5)
+
+        self.view_load_models_button = ttk.Button(self.ee_frame, text="View/load models", command=self.view_load_models)
+        self.view_load_models_button.pack(fill=tk.X, pady=5)
+
+        self.bind_current_model_button = ttk.Button(self.ee_frame, text="Bind current model", command=self.bind_current_model, state=tk.DISABLED)
+        self.bind_current_model_button.pack(fill=tk.X, pady=5)
+
+        self.re_evaluate_model_button = ttk.Button(self.ee_frame, text="Re-evaluate model", command=self.re_evaluate_model, state=tk.DISABLED)
+        self.re_evaluate_model_button.pack(fill=tk.X, pady=5)
+
+        # Training sets field
+        self.training_sets_label = ttk.Label(self.ee_frame, text="Training Sets")
+        self.training_sets_label.pack(pady=5)
+        self.training_sets_listbox = tk.Listbox(self.ee_frame)
+        self.training_sets_listbox.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
+
+        # Model viewer frame
+        self.model_viewer_frame = ttk.LabelFrame(self.frame, text="Model Viewer")
+        self.model_viewer_frame.pack(side=tk.TOP, expand=True, fill=tk.BOTH, padx=10, pady=10)
+
+        self.model_viewer_canvas = tk.Canvas(self.model_viewer_frame)
+        self.model_viewer_canvas.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
+
+        # Training data frame
+        self.training_data_frame = ttk.LabelFrame(self.frame, text="Training Data")
+        self.training_data_frame.pack(side=tk.BOTTOM, expand=True, fill=tk.BOTH, padx=10, pady=10)
+
+        self.training_data_text = tk.Text(self.training_data_frame, wrap=tk.NONE)
+        self.training_data_text.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
+
+        # Add scrollbars to the training data text widget
+        self.scroll_x = ttk.Scrollbar(self.training_data_frame, orient=tk.HORIZONTAL, command=self.training_data_text.xview)
+        self.scroll_y = ttk.Scrollbar(self.training_data_frame, orient=tk.VERTICAL, command=self.training_data_text.yview)
+        self.training_data_text.configure(xscrollcommand=self.scroll_x.set, yscrollcommand=self.scroll_y.set)
+        self.scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+        self.scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def populate_dropdown(self):
+        # Extract target materials and source numbers based on active sources
+        print(f"Populating dropdown with workflow data: {self.workflow_data}")
+        target_materials = self.workflow_data.get("target materials", [])
+        active_sources = self.workflow_data.get("active_sources", [])
+
+        self.target_materials = [material for i, material in enumerate(target_materials) if active_sources[i]]
+        self.source_numbers = [i + 1 for i, active in enumerate(active_sources) if active]
+
+        print(f"Target materials: {self.target_materials}")
+        self.selection_dropdown['values'] = self.target_materials
+
+    def update_workflow_data(self, workflow_data):
+        self.workflow_data = workflow_data
+        self.populate_dropdown()
+
+    def on_dropdown_selection(self, event):
+        selected_material = self.selection_var.get()
+        if not selected_material:
+            return
+
+        source_number = sc.materials.index(selected_material) + 1
+        self.display_training_data(source_number)
+
+    def display_training_data(self, source_number):
+        if source_number not in self.learning_data_dfs:
+            self.learning_data_dfs[source_number] = pd.DataFrame()
+
+        self.training_sets_listbox.delete(0, tk.END)
+        self.training_data_text.delete(1.0, tk.END)
+
+        # Add entries to the training sets listbox and update the training data text widget
+        if not self.learning_data_dfs[source_number].empty:
+            for folder in self.learning_data_dfs[source_number]['folder_path'].unique():
+                self.training_sets_listbox.insert(tk.END, folder)
+            self.update_training_data_text(source_number)
+
+    def add_training_data(self):
+        selected_material = self.selection_var.get()
+        if not selected_material:
+            messagebox.showwarning("Warning", "Please select a target material.")
+            return
+
+        source_number = sc.materials.index(selected_material) + 1
+        base_dir = "C:/Users/jonsc690/Documents/BEA-supervisor/SDL_reports"
+        folders = [f for f in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, f)) and "EE_LearnMinimumRate" in f and f"([{source_number}])" in f]
+
+        if not folders:
+            messagebox.showwarning("Warning", "No matching folders found.")
+            return
+
+        stripped_folders = [f[:9] for f in folders]
+        selected_folders = self.select_folders(stripped_folders)
+        if not selected_folders:
+            return
+
+        for folder in selected_folders:
+            full_path = os.path.join(base_dir, folder)
+            self.training_sets_listbox.insert(tk.END, full_path)
+            self.load_training_data(full_path, source_number)
+
+        self.update_training_data_text(source_number)
+
+    def select_folders(self, folders):
+        popup = tk.Toplevel(self.parent)
+        popup.title("Select Training Folders")
+        popup.geometry("300x400")
+
+        listbox = tk.Listbox(popup, selectmode=tk.MULTIPLE)
+        for folder in folders:
+            listbox.insert(tk.END, folder)
+        listbox.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+
+        def on_ok():
+            popup.selected_folders = [folders[i] for i in listbox.curselection()]
+            popup.destroy()
+
+        def on_cancel():
+            popup.selected_folders = []
+            popup.destroy()
+
+        ok_button = ttk.Button(popup, text="OK", command=on_ok)
+        ok_button.pack(side=tk.LEFT, padx=10, pady=10)
+
+        cancel_button = ttk.Button(popup, text="Cancel", command=on_cancel)
+        cancel_button.pack(side=tk.RIGHT, padx=10, pady=10)
+
+        popup.grab_set()
+        self.parent.wait_window(popup)
+
+        return popup.selected_folders
+
+    def load_training_data(self, folder, source_number):
+        csv_path = os.path.join(folder, "learning_data.csv")
+        if not os.path.isfile(csv_path):
+            messagebox.showwarning("Warning", f"No learning data found in {folder}.")
+            return
+
+        try:
+            new_data = pd.read_csv(csv_path)
+        except Exception as e:
+            messagebox.showerror("Error", f"Error reading learning data file: {e}")
+            return
+
+        if source_number in self.learning_data_dfs and not self.learning_data_dfs[source_number].empty:
+            if not self.learning_data_dfs[source_number].columns.equals(new_data.columns):
+                messagebox.showerror("Error", "Headers of the learning data files do not match. The new file will not be loaded.")
+                return
+
+        new_data['folder_path'] = folder  # Add folder path to the DataFrame for later reference
+        if source_number not in self.learning_data_dfs:
+            self.learning_data_dfs[source_number] = new_data
+        else:
+            self.learning_data_dfs[source_number] = pd.concat([self.learning_data_dfs[source_number], new_data], ignore_index=True)
+
+    def update_training_data_text(self, source_number):
+        # Clear the text widget
+        self.training_data_text.delete(1.0, tk.END)
+        # Insert the updated DataFrame contents
+        if source_number in self.learning_data_dfs and 'folder_path' in self.learning_data_dfs[source_number].columns:
+            self.training_data_text.insert(tk.END, self.learning_data_dfs[source_number].drop(columns='folder_path').to_string(index=False))
+
+    def clear_training_data(self):
+        selected_material = self.selection_var.get()
+        if not selected_material:
+            messagebox.showwarning("Warning", "Please select a target material.")
+            return
+
+        source_number = sc.materials.index(selected_material) + 1
+        self.learning_data_dfs[source_number] = pd.DataFrame()
+        self.training_sets_listbox.delete(0, tk.END)
+        self.update_training_data_text(source_number)
+
+    def train_new_model(self):
+        # Add functionality to train a new model
+        print("Train new model")
+
+    def view_load_models(self):
+        # Add functionality to view or load models
+        print("View/load models")
+
+    def bind_current_model(self):
+        # Add functionality to bind the current model
+        print("Bind current model")
+
+    def re_evaluate_model(self):
+        # Add functionality to re-evaluate the model
+        print("Re-evaluate model")
 
 if __name__ == "__main__":
     app = BerthaGUI()

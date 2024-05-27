@@ -1,0 +1,1 @@
+{"target materials": ["Zr", "CuS", "Sn", "SnS", "Ba", "ZnS"], "active_sources": [false, true, false, true, false, true], "target_compositions": [{"CuS": "2", "SnS": "1", "ZnS": "1"}, {"CuS": "1", "SnS": "1", "ZnS": "1"}]}
