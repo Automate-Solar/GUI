@@ -178,10 +178,12 @@ class RecipeWindow(tk.Toplevel):
         self.qcms_frame = ttk.LabelFrame(self.process_frame, text="QCMs")
         self.qcms_frame.pack(pady=5, fill=tk.X)
 
-        self.use_qcms_toggle = ttk.Checkbutton(self.qcms_frame, text="Use QCMs")
+        self.use_qcms_toggle_var = tk.IntVar(value=0)  # Default unchecked
+        self.use_qcms_toggle = ttk.Checkbutton(self.qcms_frame, text="Use QCMs", variable=self.use_qcms_toggle_var)
         self.use_qcms_toggle.pack(side=tk.LEFT, padx=5, pady=5)
 
-        self.min_qcm_toggle = ttk.Checkbutton(self.qcms_frame, text="Minimize QCM Exposure")
+        self.min_qcm_toggle_var = tk.IntVar(value=0)  # Default unchecked
+        self.min_qcm_toggle = ttk.Checkbutton(self.qcms_frame, text="Minimize QCM Exposure", variable=self.min_qcm_toggle_var)
         self.min_qcm_toggle.pack(side=tk.LEFT, padx=5, pady=5)
 
         self.iterations_label = ttk.Label(self.process_frame, text="Iterations")
@@ -190,7 +192,8 @@ class RecipeWindow(tk.Toplevel):
         self.iterations_entry = ttk.Entry(self.process_frame)
         self.iterations_entry.pack(pady=5)
 
-        self.make_samples_check = ttk.Checkbutton(self.process_frame, text="Make Samples")
+        self.make_samples_check_var = tk.IntVar(value=0)  # Default unchecked
+        self.make_samples_check = ttk.Checkbutton(self.process_frame, text="Make Samples", variable=self.make_samples_check_var)
         self.make_samples_check.pack(pady=5)
 
         # Recipe preview widgets
@@ -203,10 +206,12 @@ class RecipeWindow(tk.Toplevel):
         self.sim_save_frame = ttk.Frame(self)
         self.sim_save_frame.pack(side=tk.LEFT, fill=tk.X, padx=10, pady=10)
 
-        self.simulate_toggle = ttk.Checkbutton(self.sim_save_frame, text="Simulate")
+        self.simulate_toggle_var = tk.IntVar(value=0)  # Default unchecked
+        self.simulate_toggle = ttk.Checkbutton(self.sim_save_frame, text="Simulate", variable=self.simulate_toggle_var)
         self.simulate_toggle.pack(side=tk.LEFT, padx=5, pady=5)
 
-        self.save_toggle = ttk.Checkbutton(self.sim_save_frame, text="Save")
+        self.save_toggle_var = tk.IntVar(value=0)  # Default unchecked
+        self.save_toggle = ttk.Checkbutton(self.sim_save_frame, text="Save", variable=self.save_toggle_var)
         self.save_toggle.pack(side=tk.LEFT, padx=5, pady=5)
 
         self.run_cancel_frame = ttk.Frame(self)
@@ -240,7 +245,6 @@ class RecipeWindow(tk.Toplevel):
         self.parent.deiconify()
         self.destroy()
 
-
 class WorkflowWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
@@ -248,22 +252,30 @@ class WorkflowWindow(tk.Toplevel):
         self.title("Enter Self-Driving Workflow")
         self.geometry("800x1000")
 
+        self.workflow_dir = "workflow definition files"
+        os.makedirs(self.workflow_dir, exist_ok=True)
+
+        self.active_sources = [False] * 6  # Initialize active_sources as a class variable
+        self.loaded_workflow_file = tk.StringVar(value="No file loaded")  # Variable to hold the name of the loaded workflow file
         self.create_widgets()
 
     def create_widgets(self):
         self.top_frame = ttk.Frame(self)
         self.top_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
 
-        self.load_button = ttk.Button(self.top_frame, text="Load Workflow…")
+        self.load_button = ttk.Button(self.top_frame, text="Load Workflow…", command=self.load_workflow)
         self.load_button.pack(side=tk.LEFT, padx=5, pady=5)
 
-        self.new_button = ttk.Button(self.top_frame, text="New Workflow…")
+        self.new_button = ttk.Button(self.top_frame, text="New Workflow…", command=self.new_workflow)
         self.new_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self.loaded_file_label = ttk.Label(self.top_frame, textvariable=self.loaded_workflow_file)
+        self.loaded_file_label.pack(side=tk.LEFT, padx=5, pady=5)
 
         self.save_run_close_frame = ttk.Frame(self)
         self.save_run_close_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
 
-        self.save_button = ttk.Button(self.save_run_close_frame, text="Save Workflow")
+        self.save_button = ttk.Button(self.save_run_close_frame, text="Save Workflow", command=self.save_workflow)
         self.save_button.pack(side=tk.LEFT, padx=5, pady=5)
 
         self.run_button = ttk.Button(self.save_run_close_frame, text="Run Experiments")
@@ -291,30 +303,116 @@ class WorkflowWindow(tk.Toplevel):
         self.table_frame = ttk.Frame(tab)
         self.table_frame.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
 
-        self.table_headers = ["Material 1", "Material 2", "Material 3", "Material 4", "Material 5", "Material 6"]
+        self.table_headers = []
         self.table_entries = {}
 
-        for col, header in enumerate(self.table_headers):
-            ttk.Label(self.table_frame, text=header).grid(row=0, column=col + 1)
-        
         for row in range(1, 9):
             ttk.Label(self.table_frame, text=str(row)).grid(row=row, column=0)
             self.table_entries[row] = []
-            for col in range(1, 7):
-                entry = ttk.Entry(self.table_frame)
-                entry.grid(row=row, column=col)
-                self.table_entries[row].append(entry)
+
+    def update_table_headers(self):
+        for widget in self.table_frame.winfo_children():
+            widget.destroy()
+
+        headers = [sc.materials[i] for i, active in enumerate(self.active_sources) if active]
+
+        for col, header in enumerate(headers):
+            ttk.Label(self.table_frame, text=header).grid(row=0, column=col + 1)
+            self.table_headers.append(header)
 
         for row in range(1, 9):
-            ttk.Button(self.table_frame, text="Fix Target", command=lambda r=row: self.fix_target(r)).grid(row=row, column=7)
+            ttk.Label(self.table_frame, text=str(row)).grid(row=row, column=0)
+            self.table_entries[row] = []
+            for col in range(len(headers)):
+                entry = ttk.Entry(self.table_frame)
+                entry.grid(row=row, column=col + 1)
+                self.table_entries[row].append(entry)
 
     def fix_target(self, row):
-        # Here you would implement the logic for fixing the target
+        # Implement logic for fixing the target
         pass
+
+    def load_workflow(self):
+        filename = filedialog.askopenfilename(initialdir=self.workflow_dir, filetypes=[("JSON files", "*.json")])
+        if filename:
+            with open(filename, 'r') as file:
+                data = json.load(file)
+                self.populate_workflow(data)
+                self.loaded_workflow_file.set(f"Loaded: {os.path.basename(filename)}")
+
+    def save_workflow(self):
+        filename = filedialog.asksaveasfilename(initialdir=self.workflow_dir, defaultextension=".json", filetypes=[("JSON files", "*.json")])
+        if filename:
+            data = self.extract_workflow_data()
+            with open(filename, 'w') as file:
+                json.dump(data, file)
+            self.loaded_workflow_file.set(f"Saved: {os.path.basename(filename)}")
+
+    def new_workflow(self):
+        # Clear current entries to start a new workflow
+        for entry_list in self.table_entries.values():
+            for entry in entry_list:
+                entry.delete(0, tk.END)
+
+        # Create the "choose active sources" popup window
+        popup = tk.Toplevel(self)
+        popup.title("Choose Active Sources")
+        popup.geometry("600x200")
+
+        def toggle_source(index):
+            self.active_sources[index] = not self.active_sources[index]
+
+        # Create toggle controls and non-editable fields in the popup
+        for i in range(6):
+            toggle_button = ttk.Checkbutton(popup, text=f"Source {i + 1}", command=lambda i=i: toggle_source(i))
+            toggle_button.grid(row=0, column=i, padx=10, pady=10)
+            value_label = ttk.Label(popup, text=sc.materials[i])
+            value_label.grid(row=1, column=i, padx=10, pady=10)
+
+        def create_workflow():
+            if sum(self.active_sources) < 2:
+                messagebox.showwarning("Warning", "Please choose at least two active sources.")
+            else:
+                filename = filedialog.asksaveasfilename(initialdir=self.workflow_dir, defaultextension=".json", filetypes=[("JSON files", "*.json")])
+                if filename:
+                    workflow_data = {
+                        "target materials": sc.materials,
+                        "active_sources": self.active_sources
+                    }
+                    with open(filename, 'w') as file:
+                        json.dump(workflow_data, file)
+                    self.loaded_workflow_file.set(f"Created: {os.path.basename(filename)}")
+                    self.update_table_headers()
+                    popup.destroy()
+
+        def cancel():
+            popup.destroy()
+
+        # Create "Create Workflow" and "Cancel" buttons in the popup
+        create_button = ttk.Button(popup, text="Create Workflow", command=create_workflow)
+        create_button.grid(row=2, column=2, padx=10, pady=10)
+
+        cancel_button = ttk.Button(popup, text="Cancel", command=cancel)
+        cancel_button.grid(row=2, column=3, padx=10, pady=10)
+
+    def extract_workflow_data(self):
+        data = {}
+        for row, entry_list in self.table_entries.items():
+            data[row] = [entry.get() for entry in entry_list]
+        return data
+
+    def populate_workflow(self, data):
+        self.active_sources = data.get("active_sources", [False] * 6)
+        self.update_table_headers()
+        for row, values in data.items():
+            if row != "active_sources":
+                for col, value in enumerate(values):
+                    self.table_entries[int(row)][col].insert(0, value)
 
     def on_close(self):
         self.parent.deiconify()
         self.destroy()
+
 
 if __name__ == "__main__":
     app = BerthaGUI()
