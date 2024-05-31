@@ -245,6 +245,7 @@ class RecipeWindow(tk.Toplevel):
         self.parent.deiconify()
         self.destroy()
 
+
 class WorkflowWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
@@ -304,8 +305,6 @@ class WorkflowWindow(tk.Toplevel):
                 self.create_stage_1_widgets(tab)
             elif stage == "Find Boundaries":
                 self.create_find_boundaries_tab(tab)
-            elif stage == "Learn Sputter Process":
-                self.create_learn_sputter_process_tab(tab)
 
         # Disable all tabs except the first one
         for i in range(1, len(self.workflow_stages)):
@@ -384,16 +383,7 @@ class WorkflowWindow(tk.Toplevel):
                 print("Updating dropdown in Find Boundaries tab.")
                 self.find_boundaries_tab.update_workflow_data(self.workflow_data)
                 self.find_boundaries_tab.populate_dropdown()
-                
-            # Update LearnSputterProcessTab immediately
-            if hasattr(self, 'learn_sputter_process_tab'):
-                print("Updating dropdown in Learn Sputter Process tab.")
-                self.learn_sputter_process_tab.update_workflow_data(self.workflow_data)
-                self.learn_sputter_process_tab.populate_dropdown()
 
-            # Check if any EE_LearnMinimumRate model is bound and enable the "Learn Sputter Process" tab
-            if any(key.startswith("EE_LearnMinimumRate_model") for key in self.workflow_data):
-                self.tab_control.tab(2, state="normal")
 
     def load_workflow(self):
         filename = filedialog.askopenfilename(initialdir=self.workflow_dir, filetypes=[("JSON files", "*.json")])
@@ -421,48 +411,44 @@ class WorkflowWindow(tk.Toplevel):
                 if hasattr(self, 'find_boundaries_tab'):
                     print("Updating dropdown in Find Boundaries tab.")
                     self.find_boundaries_tab.update_workflow_data(self.workflow_data)
-                # Update the dropdown in Learn Sputter Process tab
-                if hasattr(self, 'learn_sputter_process_tab'):
-                    print("Updating dropdown in Learn Sputter Process tab.")
-                    self.learn_sputter_process_tab.update_workflow_data(self.workflow_data)
-
-                # Enable the Learn Sputter Process tab if there is a bound EE_LearnMinimumRate model
-                if any(key.startswith("EE_LearnMinimumRate_model") for key in self.workflow_data):
-                    self.tab_control.tab(2, state="normal")
+                    # Iterate through bound models to update their labels
+                    for material in self.find_boundaries_tab.target_materials:
+                        self.find_boundaries_tab.update_bound_model_label(material)
 
     def save_workflow(self):
+        print("save_workflow called")  # Debug print
         if self.current_workflow_file:
             with open(self.current_workflow_file, 'r') as file:
                 data = json.load(file)
-            data["target_compositions"] = self.target_compositions_df.to_dict(orient='records')
+            self.workflow_data.update(data)  # Ensure existing data is merged
+            self.workflow_data["target_compositions"] = self.target_compositions_df.to_dict(orient='records')
             with open(self.current_workflow_file, 'w') as file:
-                json.dump(data, file)
+                json.dump(self.workflow_data, file, indent=4)
             self.loaded_workflow_file.set(f"Saved: {os.path.basename(self.current_workflow_file)}")
         else:
             filename = filedialog.asksaveasfilename(initialdir=self.workflow_dir, defaultextension=".json", filetypes=[("JSON files", "*.json")])
             if filename:
-                data = self.extract_workflow_data()
-                data["target_compositions"] = self.target_compositions_df.to_dict(orient='records')
+                self.workflow_data["target_compositions"] = self.target_compositions_df.to_dict(orient='records')
                 with open(filename, 'w') as file:
-                    json.dump(data, file)
+                    json.dump(self.workflow_data, file, indent=4)
                 self.loaded_workflow_file.set(f"Saved: {os.path.basename(filename)}")
                 self.current_workflow_file = filename
-
-        # Enable the Learn Sputter Process tab if there is a bound EE_LearnMinimumRate model
-        if any(key.startswith("EE_LearnMinimumRate_model") for key in self.workflow_data):
-            self.tab_control.tab(2, state="normal")
 
 
     def new_workflow(self):
         # Clear current entries to start a new workflow
         for entry_list in self.table_entries.values():
             for entry in entry_list:
-                if isinstance(entry, ttk.Entry):
+                if isinstance(entry, ttk.Entry):  # Ensure we only call delete on Entry widgets
                     entry.delete(0, tk.END)
                 elif isinstance(entry, ttk.Button):
-                    entry.config(state='normal')  # Reset button state to normal
+                    entry.config(state='normal')  # Re-enable bind buttons
 
-        # Reset target compositions DataFrame
+        # Reset the FindBoundariesTab state
+        if hasattr(self, 'find_boundaries_tab'):
+            self.find_boundaries_tab.reset_state()
+
+        # Reset target_compositions_df
         self.target_compositions_df = pd.DataFrame()
 
         # Create the "choose active sources" popup window
@@ -487,27 +473,17 @@ class WorkflowWindow(tk.Toplevel):
             else:
                 filename = filedialog.asksaveasfilename(initialdir=self.workflow_dir, defaultextension=".json", filetypes=[("JSON files", "*.json")])
                 if filename:
-                    workflow_data = {
+                    self.workflow_data = {  # Initialize workflow_data correctly
                         "target materials": sc.materials,
-                        "active_sources": self.active_sources
+                        "active_sources": self.active_sources,
+                        "target_compositions": []
                     }
                     with open(filename, 'w') as file:
-                        json.dump(workflow_data, file)
+                        json.dump(self.workflow_data, file, indent=4)
                     self.loaded_workflow_file.set(f"Created: {os.path.basename(filename)}")
                     self.update_table_headers()
                     self.current_workflow_file = filename
-                    self.workflow_data = workflow_data  # Update workflow_data with the new workflow
                     popup.destroy()
-
-                    # Reset and update FindBoundariesTab
-                    if hasattr(self, 'find_boundaries_tab'):
-                        self.find_boundaries_tab.reset_state()
-                        self.find_boundaries_tab.update_workflow_data(self.workflow_data)
-
-                    # Reset and update LearnSputterProcessTab
-                    if hasattr(self, 'learn_sputter_process_tab'):
-                        self.learn_sputter_process_tab.reset_state()
-                        self.learn_sputter_process_tab.update_workflow_data(self.workflow_data)
 
         def cancel():
             popup.destroy()
@@ -518,6 +494,7 @@ class WorkflowWindow(tk.Toplevel):
 
         cancel_button = ttk.Button(popup, text="Cancel", command=cancel)
         cancel_button.grid(row=2, column=3, padx=10, pady=10)
+
 
     def extract_workflow_data(self):
         data = {}
@@ -548,14 +525,10 @@ class WorkflowWindow(tk.Toplevel):
         # Create the "Find Boundaries" tab widgets here
         self.find_boundaries_tab = FindBoundariesTab(tab, self.workflow_data, self)
 
-    def create_learn_sputter_process_tab(self, tab):
-        # Create the "Learn Sputter Process" tab widgets here
-        self.learn_sputter_process_tab = LearnSputterProcessTab(tab, self.workflow_data, self)
 
     def on_close(self):
         self.parent.deiconify()
         self.destroy()
-
 
 class FindBoundariesTab:
     def __init__(self, parent, workflow_data, workflow_window):
@@ -678,11 +651,6 @@ class FindBoundariesTab:
             self.re_evaluate_model_button.config(state=tk.NORMAL)
         else:
             self.re_evaluate_model_button.config(state=tk.DISABLED)
-
-        # Clear current model name and deactivate bind button
-        self.bound_model_label.config(text="No model bound")
-        self.bind_current_model_button.config(state=tk.DISABLED)
-
 
     def update_bound_model_label(self, selected_material):
         source_key = f"EE_LearnMinimumRate_model_{selected_material}"
@@ -954,431 +922,6 @@ class FindBoundariesTab:
         selected_material = self.selection_var.get()
         if hasattr(self, 'selected_model_name') and selected_material:
             source_key = f"EE_LearnMinimumRate_model_{selected_material}"
-            if source_key in self.workflow_data:
-                messagebox.showwarning("Warning", f"There is already a model bound to this workflow for {selected_material}.")
-            else:
-                self.workflow_data[source_key] = self.selected_model_name
-                self.workflow_window.save_workflow()  # Call save_workflow through the WorkflowWindow reference
-                messagebox.showinfo("Model Bound", f"Model '{self.selected_model_name}' has been bound to the workflow for {selected_material}.")
-                self.update_bound_model_label(selected_material)
-                self.re_evaluate_model_button.config(state=tk.NORMAL)
-        else:
-            messagebox.showwarning("Warning", "No model selected to bind.")
-
-    def re_evaluate_model(self):
-        # Add functionality to re-evaluate the model
-        print("Re-evaluate model")
-
-    def perform_series(self, model_settings):
-        print(f"Performing series with settings: {model_settings}")
-        # Placeholder for the actual implementation
-        pass
-
-    def open_dashboard(self):
-        dashboard_popup = tk.Toplevel(self.parent)
-        dashboard_popup.title("Dashboard")
-        dashboard_popup.geometry("600x400")
-        ttk.Label(dashboard_popup, text="Dashboard - Placeholder").pack(pady=20)
-        # Placeholder for the actual implementation
-
-
-class LearnSputterProcessTab:
-    def __init__(self, parent, workflow_data, workflow_window):
-        self.parent = parent
-        self.workflow_data = workflow_data
-        self.workflow_window = workflow_window  # Store the reference to the WorkflowWindow instance
-        self.target_materials = []
-        self.source_numbers = []
-        self.learning_data_dfs = {}  # Initialize a dictionary to store DataFrames for each source_number
-        self.create_widgets()
-        self.populate_dropdown()
-
-    def create_widgets(self):
-        # Main frame for the tab
-        self.frame = ttk.Frame(self.parent)
-        self.frame.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
-
-        # Dropdown selection field
-        self.selection_label = ttk.Label(self.frame, text="Select Target Material:")
-        self.selection_label.pack(pady=5)
-
-        self.selection_var = tk.StringVar()
-        self.selection_dropdown = ttk.Combobox(self.frame, textvariable=self.selection_var)
-        self.selection_dropdown.pack(pady=5)
-        self.selection_dropdown.bind("<<ComboboxSelected>>", self.on_dropdown_selection)
-
-        self.bound_model_label = ttk.Label(self.frame, text="No model bound")
-        self.bound_model_label.pack(pady=5)
-
-        # SJ_LearnSputterProcess frame
-        self.sp_frame = ttk.LabelFrame(self.frame, text="SJ_LearnSputterProcess")
-        self.sp_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
-
-        # Buttons in the SJ_LearnSputterProcess frame
-        self.add_training_data_button = ttk.Button(self.sp_frame, text="Add training data", command=self.add_training_data)
-        self.add_training_data_button.pack(fill=tk.X, pady=5)
-
-        self.clear_training_data_button = ttk.Button(self.sp_frame, text="Clear training data", command=self.clear_training_data)
-        self.clear_training_data_button.pack(fill=tk.X, pady=5)
-
-        self.train_new_model_button = ttk.Button(self.sp_frame, text="Train new model", command=self.open_train_model_popup)
-        self.train_new_model_button.pack(fill=tk.X, pady=5)
-
-        self.view_load_models_button = ttk.Button(self.sp_frame, text="View/load models", command=self.open_model_selection_popup)
-        self.view_load_models_button.pack(fill=tk.X, pady=5)
-
-        self.bind_current_model_button = ttk.Button(self.sp_frame, text="Bind current model", command=self.bind_current_model, state=tk.DISABLED)
-        self.bind_current_model_button.pack(fill=tk.X, pady=5)
-
-        self.re_evaluate_model_button = ttk.Button(self.sp_frame, text="Re-evaluate model", command=self.re_evaluate_model, state=tk.DISABLED)
-        self.re_evaluate_model_button.pack(fill=tk.X, pady=5)
-
-        # Training sets field
-        self.training_sets_label = ttk.Label(self.sp_frame, text="Training Sets")
-        self.training_sets_label.pack(pady=5)
-        self.training_sets_listbox = tk.Listbox(self.sp_frame)
-        self.training_sets_listbox.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
-
-        # Model viewer frame
-        self.model_viewer_frame = ttk.LabelFrame(self.frame, text="Model Viewer")
-        self.model_viewer_frame.pack(side=tk.TOP, expand=True, fill=tk.BOTH, padx=10, pady=10)
-
-        self.model_viewer_canvas = tk.Canvas(self.model_viewer_frame)
-        self.model_viewer_canvas.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
-
-        # Training data frame
-        self.training_data_frame = ttk.LabelFrame(self.frame, text="Training Data")
-        self.training_data_frame.pack(side=tk.BOTTOM, expand=True, fill=tk.BOTH, padx=10, pady=10)
-
-        self.training_data_text = tk.Text(self.training_data_frame, wrap=tk.NONE)
-        self.training_data_text.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
-
-        # Add scrollbars to the training data text widget
-        self.scroll_x = ttk.Scrollbar(self.training_data_frame, orient=tk.HORIZONTAL, command=self.training_data_text.xview)
-        self.scroll_y = ttk.Scrollbar(self.training_data_frame, orient=tk.VERTICAL, command=self.training_data_text.yview)
-        self.training_data_text.configure(xscrollcommand=self.scroll_x.set, yscrollcommand=self.scroll_y.set)
-        self.scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
-        self.scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
-
-    def reset_state(self):
-        self.selection_var.set('')
-        self.bound_model_label.config(text="No model bound")
-        self.training_sets_listbox.delete(0, tk.END)
-        self.training_data_text.delete(1.0, tk.END)
-        for widget in self.model_viewer_canvas.winfo_children():
-            widget.destroy()
-        self.bind_current_model_button.config(state=tk.DISABLED)
-        self.re_evaluate_model_button.config(state=tk.DISABLED)
-        self.learning_data_dfs.clear()  # Clear learning data
-        self.populate_dropdown()  # Refresh the dropdown
-
-    def populate_dropdown(self):
-        # Extract target materials and source numbers based on active sources
-        print(f"Populating dropdown with workflow data: {self.workflow_data}")
-        target_materials = self.workflow_data.get("target materials", [])
-        active_sources = self.workflow_data.get("active_sources", [])
-
-        self.target_materials = [material for i, material in enumerate(target_materials) if active_sources[i]]
-        self.source_numbers = [i + 1 for i, active in enumerate(active_sources) if active]
-
-        print(f"Target materials: {self.target_materials}")
-        self.selection_dropdown['values'] = self.target_materials
-        self.selection_dropdown.set('')  # Clear the current selection
-
-    def update_workflow_data(self, workflow_data):
-        self.workflow_data = workflow_data
-        self.populate_dropdown()
-
-    def on_dropdown_selection(self, event):
-        selected_material = self.selection_var.get()
-        if not selected_material:
-            return
-
-        source_number = sc.materials.index(selected_material) + 1
-        self.display_training_data(source_number)
-        self.update_bound_model_label(selected_material)
-
-        source_key = f"SJ_LearnSputterProcess_model_{selected_material}"
-        if source_key in self.workflow_data:
-            self.re_evaluate_model_button.config(state=tk.NORMAL)
-        else:
-            self.re_evaluate_model_button.config(state=tk.DISABLED)
-
-        # Clear current model name and deactivate bind button
-        self.bound_model_label.config(text="No model bound")
-        self.bind_current_model_button.config(state=tk.DISABLED)
-
-
-    def update_bound_model_label(self, selected_material):
-        source_key = f"SJ_LearnSputterProcess_model_{selected_material}"
-        if source_key in self.workflow_data:
-            bound_model = self.workflow_data[source_key]
-            self.bound_model_label.config(text=f"Bound model for {selected_material}: {bound_model}")
-        else:
-            self.bound_model_label.config(text=f"No model bound for {selected_material}")
-
-    def display_training_data(self, source_number):
-        if source_number not in self.learning_data_dfs:
-            self.learning_data_dfs[source_number] = pd.DataFrame()
-
-        self.training_sets_listbox.delete(0, tk.END)
-        self.training_data_text.delete(1.0, tk.END)
-
-        # Add entries to the training sets listbox and update the training data text widget
-        if not self.learning_data_dfs[source_number].empty:
-            for folder in self.learning_data_dfs[source_number]['folder_path'].unique():
-                self.training_sets_listbox.insert(tk.END, folder)
-            self.update_training_data_text(source_number)
-
-    def add_training_data(self):
-        selected_material = self.selection_var.get()
-        if not selected_material:
-            messagebox.showwarning("Warning", "Please select a target material.")
-            return
-
-        source_number = sc.materials.index(selected_material) + 1
-        base_dir = "C:/Users/jonsc690/Documents/BEA-supervisor/SDL_reports"
-        folders = [f for f in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, f)) and "SJ_LearnSputterProcess" in f and f"([{source_number}])" in f]
-
-        if not folders:
-            messagebox.showwarning("Warning", "No matching folders found.")
-            return
-
-        stripped_folders = [f[:9] for f in folders]
-        selected_folders = self.select_folders(stripped_folders)
-        if not selected_folders:
-            return
-
-        for folder in selected_folders:
-            full_path = os.path.join(base_dir, folder)
-            self.training_sets_listbox.insert(tk.END, full_path)
-            self.load_training_data(full_path, source_number)
-
-        self.update_training_data_text(source_number)
-
-    def select_folders(self, folders):
-        popup = tk.Toplevel(self.parent)
-        popup.title("Select Training Folders")
-        popup.geometry("300x400")
-
-        listbox = tk.Listbox(popup, selectmode=tk.MULTIPLE)
-        for folder in folders:
-            listbox.insert(tk.END, folder)
-        listbox.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
-
-        def on_ok():
-            popup.selected_folders = [folders[i] for i in listbox.curselection()]
-            popup.destroy()
-
-        def on_cancel():
-            popup.selected_folders = []
-            popup.destroy()
-
-        ok_button = ttk.Button(popup, text="OK", command=on_ok)
-        ok_button.pack(side=tk.LEFT, padx=10, pady=10)
-
-        cancel_button = ttk.Button(popup, text="Cancel", command=on_cancel)
-        cancel_button.pack(side=tk.RIGHT, padx=10, pady=10)
-
-        popup.grab_set()
-        self.parent.wait_window(popup)
-
-        return popup.selected_folders
-
-    def load_training_data(self, folder, source_number):
-        csv_path = os.path.join(folder, "learning_data.csv")
-        if not os.path.isfile(csv_path):
-            messagebox.showwarning("Warning", f"No learning data found in {folder}.")
-            return
-
-        try:
-            new_data = pd.read_csv(csv_path)
-        except Exception as e:
-            messagebox.showerror("Error", f"Error reading learning data file: {e}")
-            return
-
-        if source_number in self.learning_data_dfs and not self.learning_data_dfs[source_number].empty:
-            if not self.learning_data_dfs[source_number].columns.equals(new_data.columns):
-                messagebox.showerror("Error", "Headers of the learning data files do not match. The new file will not be loaded.")
-                return
-
-        new_data['folder_path'] = folder  # Add folder path to the DataFrame for later reference
-        if source_number not in self.learning_data_dfs:
-            self.learning_data_dfs[source_number] = new_data
-        else:
-            self.learning_data_dfs[source_number] = pd.concat([self.learning_data_dfs[source_number], new_data], ignore_index=True)
-
-    def update_training_data_text(self, source_number):
-        # Clear the text widget
-        self.training_data_text.delete(1.0, tk.END)
-        # Insert the updated DataFrame contents
-        if source_number in self.learning_data_dfs and 'folder_path' in self.learning_data_dfs[source_number].columns:
-            self.training_data_text.insert(tk.END, self.learning_data_dfs[source_number].drop(columns='folder_path').to_string(index=False))
-
-    def clear_training_data(self):
-        selected_material = self.selection_var.get()
-        if not selected_material:
-            messagebox.showwarning("Warning", "Please select a target material.")
-            return
-
-        source_number = sc.materials.index(selected_material) + 1
-        self.learning_data_dfs[source_number] = pd.DataFrame()
-        self.training_sets_listbox.delete(0, tk.END)
-        self.update_training_data_text(source_number)
-
-    def open_train_model_popup(self):
-        popup = tk.Toplevel(self.parent)
-        popup.title("Train Model")
-        popup.geometry("400x500")
-
-        model_frame = ttk.LabelFrame(popup, text="Random Forest Classifier")
-        model_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        # Field names and default values for the Random Forest Classifier
-        model_fields = {
-            "max_depth": 15,
-            "min_samples_split": 2,
-            "n_estimators": 50,
-            "min_samples_leaf": 1,
-            "max_features": 'auto'
-        }
-
-        self.model_entries = {}
-
-        # Create entries for each model field
-        for i, (field, default) in enumerate(model_fields.items()):
-            label = ttk.Label(model_frame, text=field)
-            label.grid(row=i, column=0, padx=5, pady=5, sticky=tk.W)
-            entry = ttk.Entry(model_frame)
-            entry.grid(row=i, column=1, padx=5, pady=5)
-            entry.insert(0, str(default))
-            self.model_entries[field] = entry
-
-        evaluation_frame = ttk.LabelFrame(popup, text="Evaluation")
-        evaluation_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        # Field names and default values for the Evaluation frame
-        evaluation_fields = {
-            "CrossVal split fraction": 0.3,
-            "mean_threshold": 0.85,
-            "std_threshold": 0.15
-        }
-
-        self.evaluation_entries = {}
-
-        # Create entries for each evaluation field
-        for i, (field, default) in enumerate(evaluation_fields.items()):
-            label = ttk.Label(evaluation_frame, text=field)
-            label.grid(row=i, column=0, padx=5, pady=5, sticky=tk.W)
-            entry = ttk.Entry(evaluation_frame)
-            entry.grid(row=i, column=1, padx=5, pady=5)
-            entry.insert(0, str(default))
-            self.evaluation_entries[field] = entry
-
-        # Run and Cancel buttons
-        button_frame = ttk.Frame(popup)
-        button_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        run_button = ttk.Button(button_frame, text="Run", command=self.run_model)
-        run_button.pack(side=tk.LEFT, padx=5, pady=5)
-
-        cancel_button = ttk.Button(button_frame, text="Cancel", command=popup.destroy)
-        cancel_button.pack(side=tk.LEFT, padx=5, pady=5)
-
-        self.model_popup = popup
-
-    def run_model(self):
-        model_settings = {field: self.parse_entry_value(entry.get()) for field, entry in self.model_entries.items()}
-        evaluation_settings = {field: self.parse_entry_value(entry.get()) for field, entry in self.evaluation_entries.items()}
-        model_settings.update(evaluation_settings)
-        self.perform_series(model_settings)
-        self.open_dashboard()
-        self.model_popup.destroy()
-
-    def parse_entry_value(self, value):
-        try:
-            if '.' in value:
-                return float(value)
-            else:
-                return int(value)
-        except ValueError:
-            return value
-
-    def open_model_selection_popup(self):
-        popup = tk.Toplevel(self.parent)
-        popup.title("Select Model")
-        popup.geometry("300x400")
-
-        listbox = tk.Listbox(popup)
-        listbox.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
-
-        selected_model_var = tk.StringVar()
-
-        selected_material = self.selection_var.get()
-        if not selected_material:
-            messagebox.showwarning("Warning", "Please select a target material.")
-            popup.destroy()
-            return
-
-        source_number = sc.materials.index(selected_material) + 1
-        base_dir = "C:/Users/jonsc690/Documents/BEA-supervisor/SDL_reports"
-        folders = [f for f in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, f)) and "SJ_LearnSputterProcess" in f and f"([{source_number}])" in f]
-
-        stripped_folders = [f[:9] for f in folders]
-
-        for folder in stripped_folders:
-            listbox.insert(tk.END, folder)
-
-        def on_ok():
-            selection = listbox.curselection()
-            if selection:
-                selected_model_var.set(listbox.get(selection[0]))
-                self.display_model_in_viewer(selected_model_var.get())
-                self.selected_model_name = selected_model_var.get()  # Store the selected model name
-                self.bind_current_model_button.config(state=tk.NORMAL)  # Enable bind button
-            popup.destroy()
-
-        def on_cancel():
-            popup.destroy()
-
-        ok_button = ttk.Button(popup, text="OK", command=on_ok)
-        ok_button.pack(side=tk.LEFT, padx=10, pady=10)
-
-        cancel_button = ttk.Button(popup, text="Cancel", command=on_cancel)
-        cancel_button.pack(side=tk.RIGHT, padx=10, pady=10)
-
-        popup.grab_set()
-        self.parent.wait_window(popup)
-
-    def display_model_in_viewer(self, model_name):
-        selected_material = self.selection_var.get()
-        if not selected_material:
-            messagebox.showwarning("Warning", "Please select a target material.")
-            return
-
-        for widget in self.model_viewer_canvas.winfo_children():
-            widget.destroy()
-
-        label = ttk.Label(self.model_viewer_canvas, text=model_name)
-        label.pack(pady=10)
-
-        # Placeholder function to generate and display plots
-        self.generate_model_plots(model_name, selected_material)
-
-    def generate_model_plots(self, model_name, selected_material):
-        # Placeholder for generating plots
-        print(f"Generating plots for model: {model_name} and material: {selected_material}")
-
-        # Example: Create a placeholder label for where the plot will be displayed
-        plot_label = ttk.Label(self.model_viewer_canvas, text=f"Plot for {model_name} and material: {selected_material}")
-        plot_label.pack(pady=10)
-
-        # TODO: Implement the actual plotting logic here
-
-    def bind_current_model(self):
-        selected_material = self.selection_var.get()
-        if hasattr(self, 'selected_model_name') and selected_material:
-            source_key = f"SJ_LearnSputterProcess_model_{selected_material}"
             if source_key in self.workflow_data:
                 messagebox.showwarning("Warning", f"There is already a model bound to this workflow for {selected_material}.")
             else:

@@ -9,17 +9,16 @@
     ],
     "active_sources": [
         false,
-        true,
+        false,
         true,
         false,
-        false,
-        true
+        true,
+        false
     ],
     "target_compositions": [
         {
-            "CuS": "2",
-            "Sn": "1",
-            "ZnS": "1"
+            "Sn": "2",
+            "Ba": "1"
         }
     ]
 }
